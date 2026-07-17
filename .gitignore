@@ -1,0 +1,7 @@
+/chromium
+/target
+/crates/wasm/pkg-*/
+node_modules/
+/tools/conservation/corpus/
+/tools/conservation/results/
+*.swp

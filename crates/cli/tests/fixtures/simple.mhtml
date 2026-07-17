@@ -1,0 +1,31 @@
+From: <Saved by Blink>
+Subject: Test Page
+MIME-Version: 1.0
+Content-Type: multipart/related;
+	type="text/html";
+	boundary="BoUnDaRy"
+
+
+--BoUnDaRy
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+Content-Location: http://example.com/
+
+<link rel=3D"stylesheet" href=3D"style.css">
+<img src=3D"logo.png">
+Hello =3D World
+--BoUnDaRy
+Content-Type: text/css
+Content-Transfer-Encoding: base64
+Content-Location: http://example.com/style.css
+
+MTIzYWJj
+
+--BoUnDaRy
+Content-Type: image/png
+Content-Transfer-Encoding: base64
+Content-Location: http://example.com/logo.png
+
+iVBORw0KGgo=
+
+--BoUnDaRy--

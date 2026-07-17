@@ -1,0 +1,26 @@
+[package]
+name = "mhtml-cli"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Command-line tool (`mhtml`) to inspect and extract MHTML/MHT web archives into a browsable tree or a content-addressed S3 layout."
+keywords = ["mhtml", "mht", "extract", "cli", "web-archive"]
+categories = ["command-line-utilities", "web-programming"]
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "mhtml"
+path = "src/main.rs"
+
+[dependencies]
+mhtml = { path = "../parser", version = "0.1.0" }
+mhtml-serve = { path = "../serve", version = "0.1.0" }
+clap = { version = "4", features = ["derive"] }
+url = "2"
+percent-encoding = "2"
+anyhow = "1"
+
+[dev-dependencies]
+tempfile = "3"

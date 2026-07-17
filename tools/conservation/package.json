@@ -1,0 +1,15 @@
+{
+  "name": "mhtml-conservation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Capture real websites as MHTML with Playwright, then verify our parser/extractor conserves content by diffing our reconstruction against Chromium's native render of the same archive.",
+  "scripts": {
+    "setup": "playwright install chromium",
+    "capture": "node run/capture.js",
+    "verify": "node run/verify.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.61.0"
+  }
+}

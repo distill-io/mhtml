@@ -1,0 +1,26 @@
+# Standalone crate: kept out of the parent workspace (which also `exclude`s it)
+# so cargo-fuzz's nightly/sanitizer build flags never touch the library crates.
+[workspace]
+
+[package]
+name = "parser-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+license = "BSD-3-Clause"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.mhtml]
+path = ".."
+
+[[bin]]
+name = "parse"
+path = "fuzz_targets/parse.rs"
+test = false
+doc = false
+bench = false

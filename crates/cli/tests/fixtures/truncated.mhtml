@@ -1,0 +1,15 @@
+MIME-Version: 1.0
+Content-Type: multipart/related; boundary="BoUnDaRy"
+
+--BoUnDaRy
+Content-Type: text/html
+Content-Transfer-Encoding: quoted-printable
+Content-Location: http://example.com/
+
+first part ok
+--BoUnDaRy
+Content-Type: text/plain
+Content-Transfer-Encoding: quoted-printable
+Content-Location: http://example.com/truncated.txt
+
+this body never reaches a closing boundary

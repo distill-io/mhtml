@@ -1,0 +1,15 @@
+[package]
+name = "mhtml-wasm"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "WebAssembly bindings over `mhtml-serve`: parse, reconstruct, and content-address MHTML archives from Node or the browser."
+keywords = ["mhtml", "wasm", "web-archive", "parser"]
+categories = ["wasm", "web-programming"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+mhtml-serve = { path = "../serve", version = "0.1.0" }
+wasm-bindgen = "0.2"

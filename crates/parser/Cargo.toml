@@ -1,0 +1,16 @@
+[package]
+name = "mhtml"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "A faithful Rust port of Chromium's MHTML (.mhtml/.mht) parser — RFC 2557 multipart/related single-file web archives."
+keywords = ["mhtml", "mht", "mime", "web-archive", "parser"]
+categories = ["parser-implementations", "web-programming", "encoding"]
+
+[lib]
+
+[dependencies]
+base64 = "0.22.1"
+memchr = "2.8.3"
+thiserror = "2"
+time = { version = "0.3.53", default-features = false, features = ["parsing"] }
