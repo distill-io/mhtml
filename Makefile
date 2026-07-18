@@ -5,6 +5,10 @@ CARGO ?= cargo
 # Args passed to `make run`, e.g. `make run ARGS="list page.mhtml"`.
 ARGS ?=
 
+# Put the Rust toolchain on PATH for every recipe, so targets work even when
+# make runs with a bare PATH. `wasm-pack` in particular shells out to `cargo`.
+export PATH := $(HOME)/.cargo/bin:$(PATH)
+
 .DEFAULT_GOAL := help
 
 .PHONY: help build test fmt fmt-check clippy lint check run fuzz wasm wasm-test serve-demo \
