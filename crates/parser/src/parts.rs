@@ -334,12 +334,6 @@ fn parse_next_part<'a>(
             content.extend_from_slice(decode_utf8_latin1(chunk).as_bytes());
             if encoding == TransferEncoding::QuotedPrintable {
                 // The QP decoder needs CRLF-terminated lines to spot soft breaks.
-                // Re-appended after every line, including the last one before the
-                // boundary, so the decoded body keeps a trailing CRLF that
-                // RFC 2046 §5.1.1 treats as delimiter framing rather than content.
-                // Observable on the real Chrome capture
-                // `crates/cli/tests/fixtures/lib.ru.koi8r.mhtml`, whose two QP parts
-                // (text/html + text/javascript) each end in a spurious `\r\n`.
                 content.extend_from_slice(b"\r\n");
             }
         }
@@ -465,6 +459,11 @@ mod tests {
         let (part, _eoa) =
             one_part(b"a=3Db=\r\nc\r\n--B\r\n", hdr, Some("--B"), Some("--B--")).unwrap();
         // Soft break "=\r\n" joins the two lines; "=3D" decodes to "=".
+        // The trailing "\r\n" is the per-line CRLF re-appended after the last
+        // line before the boundary; RFC 2046 §5.1.1 treats that CRLF as
+        // delimiter framing, not body. Observable on the real Chrome capture
+        // `crates/cli/tests/fixtures/lib.ru.koi8r.mhtml`, whose two QP parts
+        // (text/html + text/javascript) each end in this spurious "\r\n".
         assert_eq!(part.body().unwrap().as_ref(), b"a=bc\r\n");
     }
 
