@@ -334,6 +334,12 @@ fn parse_next_part<'a>(
             content.extend_from_slice(decode_utf8_latin1(chunk).as_bytes());
             if encoding == TransferEncoding::QuotedPrintable {
                 // The QP decoder needs CRLF-terminated lines to spot soft breaks.
+                // Re-appended after every line, including the last one before the
+                // boundary, so the decoded body keeps a trailing CRLF that
+                // RFC 2046 §5.1.1 treats as delimiter framing rather than content.
+                // Observable on the real Chrome capture
+                // `crates/cli/tests/fixtures/lib.ru.koi8r.mhtml`, whose two QP parts
+                // (text/html + text/javascript) each end in a spurious `\r\n`.
                 content.extend_from_slice(b"\r\n");
             }
         }
