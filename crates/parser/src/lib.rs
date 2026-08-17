@@ -135,3 +135,12 @@ pub fn content_id_to_cid_url(content_id: &str) -> Option<String> {
     }
     Some(format!("cid:{}", &content_id[1..content_id.len() - 1]))
 }
+
+pub fn resource_url(&self, index: usize) -> Option<String> {
+    self.0.get_index(index).and_then(|r| r.url.clone())
+}
+
+
+pub fn resource_bytes_len(&self, index: usize) -> Option<usize> {
+    self.0.get_index(index).map(|r| r.body.len())
+}
