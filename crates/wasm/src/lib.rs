@@ -75,10 +75,6 @@ impl MhtmlArchive {
     pub fn resource_url(&self, index: usize) -> Option<String> {
         self.0.get_index(index).and_then(|r| r.url.clone())
     }
-    
-    pub fn resource_bytes_len(&self, index: usize) -> Option<usize> {
-        self.0.get_index(index).map(|r| r.body.len())
-    }
 
     pub fn resource_charset(&self, index: usize) -> Option<String> {
         self.0.get_index(index).and_then(|r| r.charset.clone())
