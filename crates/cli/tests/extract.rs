@@ -1,8 +1,9 @@
 //! End-to-end tests for `mhtml extract`. Fixture A is a hand-authored
 //! `multipart/related` archive (exact CRLFs, a realistic archive-header/part
 //! shape) exercising absolute/relative/`cid:`
-//! references, a `<base>` tag, a `srcset`, CSS `url()`/`@import`, and a
-//! Content-ID frame with no Content-Location. Fixture B truncates it mid-part.
+//! references, a `<base>` tag, a `srcset`, an inline `style` with
+//! entity-escaped `url()` quotes, CSS `url()`/`@import`, and a Content-ID frame
+//! with no Content-Location. Fixture B truncates it mid-part.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -28,6 +29,7 @@ const ROOT_HTML: &[&str] = &[
     "<img src=\"https://example.com/img/logo.png\">",
     "<img src=\"../img/logo.png\">",
     "<img srcset=\"../img/logo.png 1x, https://example.com/img/logo.png 2x\">",
+    "<div style=\"background:url(&quot;https://example.com/img/logo.png&quot;)\"></div>",
     "<iframe src=\"cid:frame-1@mhtml.test\"></iframe>",
     "<a href=\"https://external.example.org/page\">external</a>",
     "</body>",
@@ -303,6 +305,11 @@ fn rewrites_every_reference_to_an_extracted_file_or_external() {
     assert!(post.contains("src=\"../img/logo.png\""));
     assert!(post.contains("srcset=\"../img/logo.png 1x, ../img/logo.png 2x\""));
     assert!(post.contains("src=\"../../_cid/_frame-1@mhtml.test_.html\""));
+    // An inline style's url() is rewritten despite its entity-escaped quotes.
+    assert!(
+        post.contains("style=\"background:url(&quot;../img/logo.png&quot;)\""),
+        "inline style url() not rewritten: {post}"
+    );
     assert!(post.contains("https://external.example.org/page"));
 
     // CSS url() rewritten; the absolute @import left as an external.

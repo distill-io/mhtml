@@ -375,12 +375,15 @@ where
         Ok(())
     }));
 
-    // style="" attributes delegate to the CSS rewriter.
+    // style="" attributes delegate to the CSS rewriter. Archives carry the
+    // encoded form (`url(&quot;…&quot;)`), so decode before rewriting and
+    // re-escape after; comparing against the decoded form leaves a miss intact.
     settings = settings.append_element_content_handler(element!("[style]", move |el| {
         if let Some(value) = el.get_attribute("style") {
-            let rewritten = rewrite_css(&value, base, resolve);
-            if rewritten != value {
-                let _ = el.set_attribute("style", &rewritten);
+            let css = decode_entities(&value);
+            let rewritten = rewrite_css(&css, base, resolve);
+            if rewritten != *css {
+                let _ = el.set_attribute("style", &escape_attr(&rewritten));
             }
         }
         Ok(())
@@ -741,6 +744,52 @@ mod tests {
                 &[("http://h/dir/bg.png", "bg.png")]
             ),
             r#"<style>a{background:url("bg.png")}</style>"#
+        );
+    }
+
+    #[test]
+    fn rewrites_style_attribute_with_escaped_quotes() {
+        // Browsers escape the quotes when serializing an inline style, and the
+        // HTML parser decodes them before the CSS parser sees the value.
+        assert_eq!(
+            run(
+                r#"<div style="background:url(&quot;bg.png&quot;)">x</div>"#,
+                &[("http://h/dir/bg.png", "assets/bg.png")]
+            ),
+            r#"<div style="background:url(&quot;assets/bg.png&quot;)">x</div>"#
+        );
+        // Single quotes and numeric references are escaped the same way.
+        assert_eq!(
+            run(
+                r#"<div style="background:url(&#39;bg.png&#39;)">x</div>"#,
+                &[("http://h/dir/bg.png", "assets/bg.png")]
+            ),
+            r#"<div style="background:url(&quot;assets/bg.png&quot;)">x</div>"#
+        );
+    }
+
+    #[test]
+    fn style_attribute_ampersand_survives_the_round_trip() {
+        // Decoding means the `&` we write back has to be re-escaped.
+        assert_eq!(
+            run(
+                r#"<div style="background:url(&quot;a.php?x=1&amp;y=2&quot;),url(&quot;b.php?x=1&amp;y=2&quot;)">x</div>"#,
+                &[("http://h/dir/a.php?x=1&y=2", "a.png")]
+            ),
+            r#"<div style="background:url(&quot;a.png&quot;),url(&quot;b.php?x=1&amp;y=2&quot;)">x</div>"#
+        );
+    }
+
+    #[test]
+    fn unrewritten_style_attribute_keeps_its_original_encoding() {
+        // Nothing resolves, so the attribute streams through untouched rather
+        // than being re-serialized from its decoded form.
+        assert_eq!(
+            run(
+                r#"<div style="background:url(&#34;other.png&#34;)">x</div>"#,
+                &[]
+            ),
+            r#"<div style="background:url(&#34;other.png&#34;)">x</div>"#
         );
     }
 
