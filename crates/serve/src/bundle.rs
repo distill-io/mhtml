@@ -164,7 +164,8 @@ impl Bundle {
     /// Serve-ready bytes for resource `index` under `strategy`. `None` only for
     /// an invalid index.
     ///
-    /// `text/html` and `text/css` resources are rewritten: every reference that
+    /// `text/html`, `application/xhtml+xml`, and `text/css` resources are
+    /// rewritten: every reference that
     /// resolves to an in-bundle resource becomes that target's key under
     /// `strategy` (via [`naming::reference`], always relative and never leading
     /// `/`) plus the reference's original fragment; anything resolving outside
@@ -205,7 +206,9 @@ impl Bundle {
         };
 
         let bytes = match resource.mime.as_str() {
-            "text/html" => rewrite_html(
+            // xhtml counts as a document in entry.rs and naming::forced_ext too;
+            // omitting it here made the entry we pick the one document never rewritten
+            "text/html" | "application/xhtml+xml" => rewrite_html(
                 &resource.body,
                 &base,
                 resource.charset.as_deref(),
@@ -267,6 +270,26 @@ Content-Location: http://example.com/index.html\r\n\
 Content-Transfer-Encoding: quoted-printable\r\n\
 \r\n\
 <img src=3D\"logo.png\">\r\n\
+--B\r\n\
+Content-Type: image/png\r\n\
+Content-Location: http://example.com/logo.png\r\n\
+Content-Transfer-Encoding: base64\r\n\
+\r\n\
+iVBORw0KGgo=\r\n\
+--B--\r\n";
+
+    /// The same archive with an `application/xhtml+xml` root — the MIME Blink
+    /// writes for a document parsed as XML.
+    const XHTML: &[u8] = b"\
+From: <Saved by Blink>\r\n\
+Content-Type: multipart/related; boundary=\"B\"\r\n\
+\r\n\
+--B\r\n\
+Content-Type: application/xhtml+xml\r\n\
+Content-Location: http://example.com/index.xhtml\r\n\
+Content-Transfer-Encoding: quoted-printable\r\n\
+\r\n\
+<html xmlns=3D\"http://www.w3.org/1999/xhtml\"><body><img src=3D\"logo.png\"/></body></html>\r\n\
 --B\r\n\
 Content-Type: image/png\r\n\
 Content-Location: http://example.com/logo.png\r\n\
@@ -427,6 +450,24 @@ Content-Transfer-Encoding: 7bit\r\n\
         let key = format!("{}.png", naming::content_hash(&png.body));
         assert!(html.contains(&format!("src=\"{key}\"")), "got: {html}");
         assert!(!html.contains("http://example.com/logo.png"), "got: {html}");
+    }
+
+    #[test]
+    fn xhtml_entry_is_rewritten_like_html() {
+        // entry.rs already treats application/xhtml+xml as a document, so a root
+        // left unrewritten keeps absolute references and its subresources lose
+        // their only pointer. lol_html keeps the self-closing slash, so routing
+        // XML through the HTML rewriter does not cost well-formedness.
+        let bundle = Bundle::from_bytes(XHTML).expect("archive parses");
+        let out = bundle
+            .rewritten(0, &NamingStrategy::ContentHash, None)
+            .expect("valid index");
+        let xhtml = String::from_utf8(out).expect("utf-8");
+        let png = bundle.get_index(1).expect("png");
+        let key = format!("{}.png", naming::content_hash(&png.body));
+        assert!(xhtml.contains(&format!("src=\"{key}\"")), "got: {xhtml}");
+        assert!(!xhtml.contains("src=\"logo.png\""), "got: {xhtml}");
+        assert!(xhtml.contains("/>"), "self-closing tag lost: {xhtml}");
     }
 
     #[test]
@@ -592,7 +633,7 @@ iVBORw0KGgo=\r\n\
         )
         .expect("utf-8");
         assert!(
-            html.contains("<base href=\"https://cdn.example/p/\">"),
+            html.contains("<base href=\"https://cdn.example/p/\"/>"),
             "base injected: {html}"
         );
         // The reference stays the bare relative key (resolves against <base>).

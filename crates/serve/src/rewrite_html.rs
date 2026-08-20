@@ -340,7 +340,7 @@ where
         Ok(())
     }));
     if !has_base && let Some(href) = &emit_base {
-        let tag = format!("<base href=\"{}\">", escape_attr(href));
+        let tag = format!("<base href=\"{}\"/>", escape_attr(href));
         settings = settings.append_element_content_handler(element!("head", move |el| {
             el.prepend(&tag, ContentType::Html);
             Ok(())
@@ -375,12 +375,15 @@ where
         Ok(())
     }));
 
-    // style="" attributes delegate to the CSS rewriter.
+    // style="" attributes delegate to the CSS rewriter. Archives carry the
+    // encoded form (`url(&quot;…&quot;)`), so decode before rewriting and
+    // re-escape after; comparing against the decoded form leaves a miss intact.
     settings = settings.append_element_content_handler(element!("[style]", move |el| {
         if let Some(value) = el.get_attribute("style") {
-            let rewritten = rewrite_css(&value, base, resolve);
-            if rewritten != value {
-                let _ = el.set_attribute("style", &rewritten);
+            let style = decode_entities(&value);
+            let rewritten = rewrite_css(&style, base, resolve);
+            if rewritten != *style {
+                let _ = el.set_attribute("style", &escape_attr(&rewritten));
             }
         }
         Ok(())
@@ -599,10 +602,26 @@ mod tests {
         );
         let s = String::from_utf8(out).unwrap();
         assert!(
-            s.contains("<head><base href=\"https://cdn/\"><title>"),
+            s.contains("<head><base href=\"https://cdn/\"/><title>"),
             "got: {s}"
         );
         assert!(s.contains("href=\"other.html\""), "ref stays relative: {s}");
+    }
+
+    #[test]
+    fn injected_base_is_self_closing() {
+        // The entry a base_href is injected into can be application/xhtml+xml,
+        // where an unclosed <base> is a fatal parse error. The trailing solidus
+        // is inert on a void element, so HTML output is unaffected.
+        let out = rewrite_html(
+            br#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title></head><body></body></html>"#,
+            &base(),
+            None,
+            Some("https://cdn/"),
+            &resolver(&[]),
+        );
+        let s = String::from_utf8(out).unwrap();
+        assert!(s.contains("<base href=\"https://cdn/\"/>"), "got: {s}");
     }
 
     #[test]
@@ -618,7 +637,7 @@ mod tests {
         );
         let s = String::from_utf8(out).unwrap();
         assert!(
-            s.contains("<base href=\"https://cdn/assets/\">"),
+            s.contains("<base href=\"https://cdn/assets/\"/>"),
             "got: {s}"
         );
     }
@@ -636,6 +655,8 @@ mod tests {
             &resolver(&[("http://orig/p.html", "p.html")]),
         );
         let s = String::from_utf8(out).unwrap();
+        // an existing <base> is rewritten in place, so it keeps the document's own
+        // serialization — only an injected tag is ours to close
         assert!(s.contains("<base href=\"https://cdn/\">"), "got: {s}");
         assert_eq!(s.matches("<base").count(), 1, "exactly one base: {s}");
         assert!(s.contains("href=\"p.html\">"), "ref stays relative: {s}");
@@ -741,6 +762,52 @@ mod tests {
                 &[("http://h/dir/bg.png", "bg.png")]
             ),
             r#"<style>a{background:url("bg.png")}</style>"#
+        );
+    }
+
+    #[test]
+    fn rewrites_style_attribute_with_escaped_quotes() {
+        // Browsers escape the quotes when serializing an inline style, and the
+        // HTML parser decodes them before the CSS parser sees the value.
+        assert_eq!(
+            run(
+                r#"<div style="background:url(&quot;bg.png&quot;)">x</div>"#,
+                &[("http://h/dir/bg.png", "assets/bg.png")]
+            ),
+            r#"<div style="background:url(&quot;assets/bg.png&quot;)">x</div>"#
+        );
+        // Single quotes and numeric references are escaped the same way.
+        assert_eq!(
+            run(
+                r#"<div style="background:url(&#39;bg.png&#39;)">x</div>"#,
+                &[("http://h/dir/bg.png", "assets/bg.png")]
+            ),
+            r#"<div style="background:url(&quot;assets/bg.png&quot;)">x</div>"#
+        );
+    }
+
+    #[test]
+    fn style_attribute_ampersand_survives_the_round_trip() {
+        // Decoding means the `&` we write back has to be re-escaped.
+        assert_eq!(
+            run(
+                r#"<div style="background:url(&quot;a.php?x=1&amp;y=2&quot;),url(&quot;b.php?x=1&amp;y=2&quot;)">x</div>"#,
+                &[("http://h/dir/a.php?x=1&y=2", "a.png")]
+            ),
+            r#"<div style="background:url(&quot;a.png&quot;),url(&quot;b.php?x=1&amp;y=2&quot;)">x</div>"#
+        );
+    }
+
+    #[test]
+    fn unrewritten_style_attribute_keeps_its_original_encoding() {
+        // Nothing resolves, so the attribute streams through untouched rather
+        // than being re-serialized from its decoded form.
+        assert_eq!(
+            run(
+                r#"<div style="background:url(&#34;other.png&#34;)">x</div>"#,
+                &[]
+            ),
+            r#"<div style="background:url(&#34;other.png&#34;)">x</div>"#
         );
     }
 

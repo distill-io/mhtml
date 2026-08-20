@@ -1,6 +1,6 @@
 [package]
 name = "mhtml-serve"
-version = "0.1.0"
+version = "0.1.1"
 edition.workspace = true
 license.workspace = true
 description = "Consumption layer over the `mhtml` parser: reconstruct an archive, resolve MIME types, and rewrite/serve its resources (content-hash naming for S3)."
