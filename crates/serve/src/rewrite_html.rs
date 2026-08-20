@@ -380,9 +380,9 @@ where
     // re-escape after; comparing against the decoded form leaves a miss intact.
     settings = settings.append_element_content_handler(element!("[style]", move |el| {
         if let Some(value) = el.get_attribute("style") {
-            let css = decode_entities(&value);
-            let rewritten = rewrite_css(&css, base, resolve);
-            if rewritten != *css {
+            let style = decode_entities(&value);
+            let rewritten = rewrite_css(&style, base, resolve);
+            if rewritten != *style {
                 let _ = el.set_attribute("style", &escape_attr(&rewritten));
             }
         }
