@@ -340,7 +340,7 @@ where
         Ok(())
     }));
     if !has_base && let Some(href) = &emit_base {
-        let tag = format!("<base href=\"{}\">", escape_attr(href));
+        let tag = format!("<base href=\"{}\"/>", escape_attr(href));
         settings = settings.append_element_content_handler(element!("head", move |el| {
             el.prepend(&tag, ContentType::Html);
             Ok(())
@@ -602,10 +602,26 @@ mod tests {
         );
         let s = String::from_utf8(out).unwrap();
         assert!(
-            s.contains("<head><base href=\"https://cdn/\"><title>"),
+            s.contains("<head><base href=\"https://cdn/\"/><title>"),
             "got: {s}"
         );
         assert!(s.contains("href=\"other.html\""), "ref stays relative: {s}");
+    }
+
+    #[test]
+    fn injected_base_is_self_closing() {
+        // The entry a base_href is injected into can be application/xhtml+xml,
+        // where an unclosed <base> is a fatal parse error. The trailing solidus
+        // is inert on a void element, so HTML output is unaffected.
+        let out = rewrite_html(
+            br#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title></head><body></body></html>"#,
+            &base(),
+            None,
+            Some("https://cdn/"),
+            &resolver(&[]),
+        );
+        let s = String::from_utf8(out).unwrap();
+        assert!(s.contains("<base href=\"https://cdn/\"/>"), "got: {s}");
     }
 
     #[test]
@@ -621,7 +637,7 @@ mod tests {
         );
         let s = String::from_utf8(out).unwrap();
         assert!(
-            s.contains("<base href=\"https://cdn/assets/\">"),
+            s.contains("<base href=\"https://cdn/assets/\"/>"),
             "got: {s}"
         );
     }
@@ -639,6 +655,8 @@ mod tests {
             &resolver(&[("http://orig/p.html", "p.html")]),
         );
         let s = String::from_utf8(out).unwrap();
+        // an existing <base> is rewritten in place, so it keeps the document's own
+        // serialization — only an injected tag is ours to close
         assert!(s.contains("<base href=\"https://cdn/\">"), "got: {s}");
         assert_eq!(s.matches("<base").count(), 1, "exactly one base: {s}");
         assert!(s.contains("href=\"p.html\">"), "ref stays relative: {s}");

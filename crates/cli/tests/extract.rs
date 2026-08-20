@@ -554,7 +554,7 @@ fn hash_extract_with_base_href_sets_base_on_entry() {
 
     let index = read(&out.join("index.html"));
     assert!(
-        index.contains("<base href=\"https://cdn.example/\">"),
+        index.contains("<base href=\"https://cdn.example/\"/>"),
         "{index}"
     );
     // References stay bare relative hash keys (they resolve against <base>).
