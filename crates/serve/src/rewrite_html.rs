@@ -71,7 +71,6 @@ fn entity_char(entity: &str) -> Option<char> {
 /// Elements whose reference-bearing attribute is a plain URL. Each entry is a
 /// `(selector, attribute)` pair fed to a shared rewriting handler.
 const URL_ATTRS: &[(&str, &str)] = &[
-    ("a[href]", "href"),
     ("link[href]", "href"),
     ("area[href]", "href"),
     ("img[src]", "src"),
@@ -474,7 +473,7 @@ mod tests {
     }
 
     #[test]
-    fn rewrites_anchor_href() {
+    fn anchor_href_is_left_untouched() {
         assert_eq!(
             run(
                 r#"<a href="other.html">x</a>"#,
@@ -487,7 +486,7 @@ mod tests {
                 r#"<a href="http://h/img/p.html">x</a>"#,
                 &[("http://h/img/p.html", "../img/p.html")]
             ),
-            r#"<a href="../img/p.html">x</a>"#
+            r#"<a href="http://h/img/p.html">x</a>"#
         );
     }
 
@@ -906,10 +905,10 @@ mod tests {
         // Numeric character references decode as well.
         assert_eq!(
             run(
-                r#"<a href="http://h/x?a=1&#38;b=2">z</a>"#,
-                &[("http://h/x?a=1&b=2", "x.html")]
+                r#"<img src="http://h/x?a=1&#38;b=2">"#,
+                &[("http://h/x?a=1&b=2", "x.png")]
             ),
-            r#"<a href="x.html">z</a>"#
+            r#"<img src="x.png">"#
         );
     }
 }

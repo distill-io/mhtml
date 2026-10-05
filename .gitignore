@@ -5,3 +5,4 @@ node_modules/
 /tools/conservation/corpus/
 /tools/conservation/results/
 *.swp
+.idea
