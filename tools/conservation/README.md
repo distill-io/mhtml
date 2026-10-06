@@ -55,9 +55,9 @@ What `crates/serve/src/rewrite_html.rs` (+ `rewrite_css.rs`) repoints or defuses
 so the reconstruction renders offline, network-sealed:
 
 - **URL attributes** repointed to the extracted local file (`URL_ATTRS`):
-  `a[href]`, `link[href]`, `area[href]`, `img[src]`, `script[src]`,
-  `iframe[src]`, `frame[src]`, `embed[src]`, `audio[src]`, `video[src]`,
-  `source[src]`, `input[src]`, `track[src]`, `video[poster]`, `object[data]`,
+  `link[href]`, `area[href]`, `img[src]`, `script[src]`, `iframe[src]`,
+  `frame[src]`, `embed[src]`, `audio[src]`, `video[src]`, `source[src]`,
+  `input[src]`, `track[src]`, `video[poster]`, `object[data]`,
   `body[background]`, `button[formaction]`, `input[formaction]`.
 - **`srcset`-format lists** — `img[srcset]`, `source[srcset]`, and
   `link[imagesrcset]` — rewritten candidate-by-candidate, preserving descriptors

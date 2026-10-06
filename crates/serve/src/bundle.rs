@@ -491,7 +491,7 @@ Content-Type: text/html\r\n\
 Content-Location: http://example.com/index.html\r\n\
 Content-Transfer-Encoding: 7bit\r\n\
 \r\n\
-<a href=\"style.css#top\">x</a><a href=\"http://other.com/x\">y</a>\r\n\
+<link href=\"style.css#top\"><link href=\"http://other.com/x\">\r\n\
 --B\r\n\
 Content-Type: text/css\r\n\
 Content-Location: http://example.com/style.css\r\n\
