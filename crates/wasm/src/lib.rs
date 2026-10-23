@@ -68,6 +68,17 @@ impl MhtmlArchive {
         self.0.resource_key(index, &strategy_for(strategy))
     }
 
+    /// The indices of the in-bundle resources that resource `index` references,
+    /// in document order, each once; empty for anything but an html/css document.
+    pub fn children_at(&self, index: usize) -> Option<Vec<usize>> {
+        self.0.children(index).map(<[usize]>::to_vec)
+    }
+
+    /// The lowercase-hex SHA-256 of resource `index`'s decoded original body.
+    pub fn source_hash_at(&self, index: usize) -> Option<String> {
+        self.0.source_hash(index)
+    }
+
     pub fn resource_mime(&self, index: usize) -> Option<String> {
         self.0.get_index(index).map(|r| r.mime.clone())
     }
