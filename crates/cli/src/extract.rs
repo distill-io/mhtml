@@ -229,18 +229,21 @@ pub fn run(
 fn extract_hash(data: &[u8], out: &Path, base_href: Option<&str>) -> anyhow::Result<Outcome> {
     let bundle = Bundle::from_bytes(data).context("parsing MHTML archive")?;
 
-    // Serve-ready assets: one per resource, the entry carrying any <base href>.
-    let assets = bundle.manifest(&NamingStrategy::ContentHash, base_href);
+    // Serve-ready assets, one per resource, each hashing to its key.
+    let assets = bundle.manifest(&NamingStrategy::ContentHash);
     let mut written: HashSet<&str> = HashSet::new();
     for asset in &assets {
         // Identical bytes share a key; write each distinct key once.
         if written.insert(asset.key.as_str()) {
             write_file(out, Path::new(&asset.key), &asset.bytes)?;
         }
-        // The entry is also served at the conventional index.html entrypoint.
-        if asset.is_entry {
-            write_file(out, Path::new("index.html"), &asset.bytes)?;
-        }
+    }
+    // The entry is also served at the conventional index.html entrypoint; that
+    // copy is not content-addressed, so it is the one that carries any <base href>.
+    if let Some(entry) = bundle.entry_index()
+        && let Some(index_html) = bundle.rewritten(entry, &NamingStrategy::ContentHash, base_href)
+    {
+        write_file(out, Path::new("index.html"), &index_html)?;
     }
 
     // manifest.json: every resource's key, MIME, and original URL.

@@ -299,47 +299,56 @@ impl Bundle {
     /// Keys are assigned bottom-up so that a document's key covers everything it
     /// renders with: a leaf is hashed as is, a document is hashed once all its
     /// children have keys, as its body rewritten with those keys. Documents that
-    /// reference each other in a cycle never get there; each of them is hashed
-    /// with its children's *source* keys (`<sha256 of the body>.<ext>`) instead,
-    /// which still changes whenever anything in the cycle changes, while
-    /// [`Bundle::rewritten`] writes their final keys like everywhere else.
+    /// reference each other in a cycle have no bottom, so the cycle is keyed as
+    /// a whole: each member's text is rewritten with the final keys of children
+    /// outside the cycle and the *source* keys (`<sha256 of the body>.<ext>`) of
+    /// those inside it, and a member's key is the hash of its own such text
+    /// followed by a digest of every member's. A change anywhere in the cycle or
+    /// below it therefore changes every member, while [`Bundle::rewritten`] still
+    /// writes their final keys like everywhere else.
     fn compute_hash_naming(&self) -> HashNaming {
         let count = self.resources.len();
         let children: Vec<Vec<usize>> = (0..count).map(|i| self.children_of(i)).collect();
 
         let mut keys: Vec<Option<String>> = vec![None; count];
-        let mut pending: Vec<usize> = (0..count).collect();
-        while !pending.is_empty() {
-            let mut ready: Vec<usize> = pending
+        // Components arrive after everything they reference, so a child outside
+        // the component being keyed always has its key already.
+        for component in strongly_connected_components(&children) {
+            let is_cycle = component.len() > 1 || children[component[0]].contains(&component[0]);
+            if !is_cycle {
+                let index = component[0];
+                let bytes = self.rewrite_references(index, &|target| keys[target].clone(), None);
+                keys[index] = Some(naming::content_hash_key(
+                    &self.resources[index].mime,
+                    &bytes,
+                ));
+                continue;
+            }
+
+            let key_for = |target: usize| -> Option<String> {
+                if component.contains(&target) {
+                    let target = &self.resources[target];
+                    return Some(naming::content_hash_key(&target.mime, &target.body));
+                }
+                keys[target].clone()
+            };
+            let texts: Vec<Vec<u8>> = component
                 .iter()
-                .copied()
-                .filter(|&i| children[i].iter().all(|&child| keys[child].is_some()))
+                .map(|&index| self.rewrite_references(index, &key_for, None).into_owned())
                 .collect();
-            let in_cycle = ready.is_empty();
-            if in_cycle {
-                // Every pending document waits on another pending one, so
-                // following the waits from any of them comes back round: this is
-                // never empty, and the loop always makes progress.
-                let is_pending: Vec<bool> = keys.iter().map(Option::is_none).collect();
-                ready = pending
-                    .iter()
-                    .copied()
-                    .filter(|&i| reaches_self(i, &children, &is_pending))
-                    .collect();
+
+            // sorted, so the order of the parts in the archive plays no role
+            let mut text_hashes: Vec<String> = texts
+                .iter()
+                .map(|text| naming::content_hash(text))
+                .collect();
+            text_hashes.sort_unstable();
+            let digest = naming::content_hash(text_hashes.concat().as_bytes());
+
+            for (&index, mut text) in component.iter().zip(texts) {
+                text.extend_from_slice(digest.as_bytes());
+                keys[index] = Some(naming::content_hash_key(&self.resources[index].mime, &text));
             }
-            for &i in &ready {
-                let resource = &self.resources[i];
-                let key_for = |target: usize| -> Option<String> {
-                    if in_cycle {
-                        let target = &self.resources[target];
-                        return Some(naming::content_hash_key(&target.mime, &target.body));
-                    }
-                    keys[target].clone()
-                };
-                let bytes = self.rewrite_references(i, &key_for, None);
-                keys[i] = Some(naming::content_hash_key(&resource.mime, &bytes));
-            }
-            pending.retain(|&i| keys[i].is_none());
         }
 
         HashNaming {
@@ -351,16 +360,16 @@ impl Bundle {
     /// Every resource ready to publish under `strategy`, as [`Asset`]s. Each
     /// carries its relative `key`, MIME/charset, and the bytes to store there:
     /// the rewritten variant for `text/html`/`text/css`, the raw body otherwise.
-    /// `base_href` is applied to the entry document only (other resources resolve
-    /// their bare keys by flat co-location). Resources with no key under
-    /// `strategy` (only possible under `MirrorPath`) are omitted.
-    pub fn manifest(&self, strategy: &NamingStrategy, base_href: Option<&str>) -> Vec<Asset> {
+    /// No `<base>` is injected anywhere, so under [`NamingStrategy::ContentHash`]
+    /// every asset's bytes hash to its key; a base belongs in a separate entry
+    /// point copy. Resources with no key under `strategy` (only possible under
+    /// `MirrorPath`) are omitted.
+    pub fn manifest(&self, strategy: &NamingStrategy) -> Vec<Asset> {
         (0..self.resources.len())
             .filter_map(|index| {
                 let key = self.resource_key(index, strategy)?;
                 let is_entry = self.entry == Some(index);
-                let bytes =
-                    self.rewritten(index, strategy, is_entry.then_some(base_href).flatten())?;
+                let bytes = self.rewritten(index, strategy, None)?;
                 let resource = &self.resources[index];
                 Some(Asset {
                     key,
@@ -374,21 +383,83 @@ impl Bundle {
     }
 }
 
-/// Whether `start` is reachable from itself through pending resources only.
-fn reaches_self(start: usize, children: &[Vec<usize>], is_pending: &[bool]) -> bool {
-    let mut seen = vec![false; children.len()];
-    let mut stack: Vec<usize> = children[start].clone();
-    while let Some(i) = stack.pop() {
-        if i == start {
-            return true;
-        }
-        if !is_pending[i] || seen[i] {
+/// Tarjan's strongly connected components over `children`, iterative so that a
+/// long reference chain cannot overflow the stack. Components come out in
+/// reverse topological order: each one after every component it references.
+fn strongly_connected_components(children: &[Vec<usize>]) -> Vec<Vec<usize>> {
+    const UNVISITED: usize = usize::MAX;
+    let count = children.len();
+    let mut visit_index = vec![UNVISITED; count];
+    let mut lowlink = vec![0; count];
+    let mut on_stack = vec![false; count];
+    let mut stack: Vec<usize> = Vec::new();
+    let mut components: Vec<Vec<usize>> = Vec::new();
+    let mut next_visit = 0;
+    // the recursion, by hand: each entry is a node and how many of its children
+    // have been visited so far
+    let mut work: Vec<(usize, usize)> = Vec::new();
+
+    let mut visit = |node: usize,
+                     visit_index: &mut Vec<usize>,
+                     lowlink: &mut Vec<usize>,
+                     stack: &mut Vec<usize>,
+                     on_stack: &mut Vec<bool>| {
+        visit_index[node] = next_visit;
+        lowlink[node] = next_visit;
+        next_visit += 1;
+        stack.push(node);
+        on_stack[node] = true;
+    };
+
+    for root in 0..count {
+        if visit_index[root] != UNVISITED {
             continue;
         }
-        seen[i] = true;
-        stack.extend_from_slice(&children[i]);
+        visit(
+            root,
+            &mut visit_index,
+            &mut lowlink,
+            &mut stack,
+            &mut on_stack,
+        );
+        work.push((root, 0));
+
+        while let Some(&(node, visited_children)) = work.last() {
+            if let Some(&child) = children[node].get(visited_children) {
+                work.last_mut().expect("just read").1 += 1;
+                if visit_index[child] == UNVISITED {
+                    visit(
+                        child,
+                        &mut visit_index,
+                        &mut lowlink,
+                        &mut stack,
+                        &mut on_stack,
+                    );
+                    work.push((child, 0));
+                } else if on_stack[child] {
+                    lowlink[node] = lowlink[node].min(visit_index[child]);
+                }
+                continue;
+            }
+
+            work.pop();
+            if let Some(&(parent, _)) = work.last() {
+                lowlink[parent] = lowlink[parent].min(lowlink[node]);
+            }
+            if lowlink[node] == visit_index[node] {
+                let mut component = Vec::new();
+                while let Some(member) = stack.pop() {
+                    on_stack[member] = false;
+                    component.push(member);
+                    if member == node {
+                        break;
+                    }
+                }
+                components.push(component);
+            }
+        }
     }
-    false
+    components
 }
 
 #[cfg(test)]
@@ -622,14 +693,17 @@ iVBORw0KGgo=\r\n\
         let a_key = hash_key(&bundle, 1);
         let b_key = hash_key(&bundle, 2);
 
-        // a's identity is its text with b's source key written in (and vice
-        // versa): there is no bottom to start from, but a change to either
-        // stylesheet still changes both keys.
+        // There is no bottom to start from, so a is keyed over its text with
+        // b's source key written in, plus a digest of the whole cycle (b's text
+        // with a's source key in it): a change to either stylesheet, or to
+        // anything either one references, changes both keys.
+        let a_source_key = naming::content_hash_key("text/css", a.as_bytes());
         let b_source_key = naming::content_hash_key("text/css", b.as_bytes());
         let a_through_b = format!("@import url(\"{b_source_key}\");");
+        let b_through_a = format!("@import url(\"{a_source_key}\");");
         assert_eq!(
             a_key,
-            naming::content_hash_key("text/css", a_through_b.as_bytes())
+            cycle_key("text/css", &a_through_b, &[&a_through_b, &b_through_a])
         );
         assert_ne!(a_key, b_key);
 
@@ -637,6 +711,76 @@ iVBORw0KGgo=\r\n\
         assert!(served(&bundle, 1).contains(&b_key));
         assert!(served(&bundle, 2).contains(&a_key));
         assert!(served(&bundle, 0).contains(&a_key));
+    }
+
+    /// Mirrors how `compute_hash_naming` keys a cycle member: its own text (the
+    /// other members as source keys) followed by the digest of every member's
+    /// such text, sorted so the order of the parts in the archive is irrelevant.
+    fn cycle_key(mime: &str, own: &str, members: &[&str]) -> String {
+        let mut member_hashes: Vec<String> = members
+            .iter()
+            .map(|text| naming::content_hash(text.as_bytes()))
+            .collect();
+        member_hashes.sort_unstable();
+        let digest = naming::content_hash(member_hashes.concat().as_bytes());
+        let mut keyed = own.as_bytes().to_vec();
+        keyed.extend_from_slice(digest.as_bytes());
+        naming::content_hash_key(mime, &keyed)
+    }
+
+    #[test]
+    fn a_change_anywhere_in_a_cycle_changes_every_member() {
+        // a -> b -> c -> a: a never names c, so a's own text cannot notice a
+        // change in c; the cycle digest must.
+        let with = |c: &str| {
+            Bundle::from_bytes(&archive(&[
+                ("text/html", "http://h/page.html", "<link href=\"a.css\">"),
+                ("text/css", "http://h/a.css", "@import url(b.css);"),
+                ("text/css", "http://h/b.css", "@import url(c.css);"),
+                ("text/css", "http://h/c.css", c),
+            ]))
+            .expect("archive parses")
+        };
+        let before = with("@import url(a.css); p{color:red}");
+        let after = with("@import url(a.css); p{color:blue}");
+        for index in 0..4 {
+            assert_ne!(
+                hash_key(&before, index),
+                hash_key(&after, index),
+                "part {index}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_change_below_a_cycle_changes_its_members() {
+        // a <-> b, and a also uses a stylesheet that uses an image: the image
+        // is two steps below the cycle and outside it.
+        let with = |png: &str| {
+            Bundle::from_bytes(&archive(&[
+                (
+                    "text/css",
+                    "http://h/a.css",
+                    "@import url(b.css); @import url(d.css);",
+                ),
+                ("text/css", "http://h/b.css", "@import url(a.css);"),
+                ("text/css", "http://h/d.css", "p{background:url(logo.png)}"),
+                ("image/png", "http://h/logo.png", png),
+            ]))
+            .expect("archive parses")
+        };
+        let before = with("PNG v1");
+        let after = with("PNG v2");
+        for index in 0..4 {
+            assert_ne!(
+                hash_key(&before, index),
+                hash_key(&after, index),
+                "part {index}"
+            );
+        }
+        // d is outside the cycle, so a names it by its final key even in a's
+        // own hashed text, and serves it that way
+        assert!(served(&after, 0).contains(&hash_key(&after, 2)));
     }
 
     #[test]
@@ -924,7 +1068,7 @@ iVBORw0KGgo=\r\n\
     #[test]
     fn manifest_has_one_asset_per_resource_with_served_bytes() {
         let bundle = Bundle::from_bytes(SIMPLE).expect("archive parses");
-        let assets = bundle.manifest(&NamingStrategy::ContentHash, None);
+        let assets = bundle.manifest(&NamingStrategy::ContentHash);
         assert_eq!(assets.len(), 2);
 
         let png = bundle.get_index(1).expect("png");
