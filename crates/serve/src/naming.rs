@@ -39,11 +39,15 @@ pub fn resource_key(
     body: &[u8],
 ) -> Option<String> {
     match strategy {
-        NamingStrategy::ContentHash => {
-            Some(format!("{}.{}", content_hash(body), ext_for_mime(mime)))
-        }
+        NamingStrategy::ContentHash => Some(content_hash_key(mime, body)),
         NamingStrategy::MirrorPath => mirror_key(url?, mime),
     }
+}
+
+/// `<sha256 of bytes>.<ext>`: the [`NamingStrategy::ContentHash`] key of `bytes`
+/// served as `mime`.
+pub(crate) fn content_hash_key(mime: &str, bytes: &[u8]) -> String {
+    format!("{}.{}", content_hash(bytes), ext_for_mime(mime))
 }
 
 /// The lowercase-hex SHA-256 of `bytes`. Used as the content-addressed key

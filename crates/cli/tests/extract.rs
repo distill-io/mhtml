@@ -559,11 +559,18 @@ fn hash_extract_with_base_href_sets_base_on_entry() {
     );
     // References stay bare relative hash keys (they resolve against <base>).
     let manifest = read(&out.join("manifest.json"));
-    let png_key = manifest_keys(&manifest)
-        .into_iter()
-        .find(|k| k.ends_with(".png"))
-        .expect("png key");
+    let keys = manifest_keys(&manifest);
+    let png_key = keys.iter().find(|k| k.ends_with(".png")).expect("png key");
     assert!(index.contains(&format!("src=\"{png_key}\"")), "{index}");
+
+    // The content-addressed copy of the entry is what its key is the hash of,
+    // so the base, a serving detail, goes into index.html only.
+    let html_key = keys
+        .iter()
+        .find(|k| k.ends_with(".html"))
+        .expect("html key");
+    let addressed = read(&out.join(html_key));
+    assert!(!addressed.contains("<base href"), "{addressed}");
 }
 
 #[test]
