@@ -19,8 +19,12 @@ fn strategy_for(label: &str) -> NamingStrategy {
 
 #[wasm_bindgen]
 impl MhtmlArchive {
-    pub fn parse(bytes: &[u8]) -> Result<MhtmlArchive, JsError> {
-        Bundle::from_bytes(bytes)
+    /// Parse `bytes`. A `hash_key` keys every `"hash"` key and source hash
+    /// (HMAC-SHA256 instead of plain SHA-256).
+    pub fn parse(bytes: &[u8], hash_key: Option<String>) -> Result<MhtmlArchive, JsError> {
+        let bundle = Bundle::from_bytes(bytes).map_err(|e| JsError::new(&e.to_string()))?;
+        bundle
+            .with_hash_key(hash_key.as_deref().map(str::as_bytes))
             .map(MhtmlArchive)
             .map_err(|e| JsError::new(&e.to_string()))
     }
@@ -74,7 +78,8 @@ impl MhtmlArchive {
         self.0.children(index).map(<[usize]>::to_vec)
     }
 
-    /// The lowercase-hex SHA-256 of resource `index`'s decoded original body.
+    /// The lowercase-hex SHA-256 (HMAC-SHA256 under the hash key) of resource
+    /// `index`'s decoded original body.
     pub fn source_hash_at(&self, index: usize) -> Option<String> {
         self.0.source_hash(index)
     }

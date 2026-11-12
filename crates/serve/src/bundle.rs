@@ -50,6 +50,10 @@ struct HashNaming {
     children: Vec<Vec<usize>>,
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("hash key is empty")]
+pub struct EmptyHashKey;
+
 /// A parsed archive in ready-to-serve form. Resources are addressed by request
 /// URL (via [`Bundle::get`]) or index (via [`Bundle::get_index`]); the entry
 /// document is pre-selected.
@@ -63,6 +67,7 @@ pub struct Bundle {
     /// no `Content-Location` of its own.
     fallback_base: Option<String>,
     hash_naming: OnceCell<HashNaming>,
+    hash_key: Option<Vec<u8>>,
 }
 
 impl Bundle {
@@ -110,6 +115,23 @@ impl Bundle {
             entry,
             fallback_base,
             hash_naming: OnceCell::new(),
+            hash_key: None,
+        })
+    }
+
+    /// Key every [`NamingStrategy::ContentHash`] hash with `key` (HMAC-SHA256)
+    /// instead of plain SHA-256, so a resource's key cannot be derived from its
+    /// bytes without it. `None` keeps plain SHA-256; an empty key is rejected,
+    /// as HMAC under it is public.
+    pub fn with_hash_key(self, key: Option<&[u8]>) -> Result<Bundle, EmptyHashKey> {
+        if key.is_some_and(<[u8]>::is_empty) {
+            return Err(EmptyHashKey);
+        }
+        Ok(Bundle {
+            hash_key: key.map(<[u8]>::to_vec),
+            // keys computed so far were under the old key
+            hash_naming: OnceCell::new(),
+            ..self
         })
     }
 
@@ -186,11 +208,12 @@ impl Bundle {
         self.hash_naming().children.get(index).map(Vec::as_slice)
     }
 
-    /// The lowercase-hex SHA-256 of resource `index`'s decoded original body.
+    /// The lowercase-hex SHA-256 (HMAC-SHA256 under the hash key) of resource
+    /// `index`'s decoded original body.
     pub fn source_hash(&self, index: usize) -> Option<String> {
         self.resources
             .get(index)
-            .map(|resource| naming::content_hash(&resource.body))
+            .map(|resource| naming::content_hash(self.hash_key.as_deref(), &resource.body))
     }
 
     /// Serve-ready bytes for resource `index` under `strategy`. `None` only for
@@ -319,6 +342,7 @@ impl Bundle {
                 let index = component[0];
                 let bytes = self.rewrite_references(index, &|target| keys[target].clone(), None);
                 keys[index] = Some(naming::content_hash_key(
+                    self.hash_key.as_deref(),
                     &self.resources[index].mime,
                     &bytes,
                 ));
@@ -328,7 +352,11 @@ impl Bundle {
             let key_for = |target: usize| -> Option<String> {
                 if component.contains(&target) {
                     let target = &self.resources[target];
-                    return Some(naming::content_hash_key(&target.mime, &target.body));
+                    return Some(naming::content_hash_key(
+                        self.hash_key.as_deref(),
+                        &target.mime,
+                        &target.body,
+                    ));
                 }
                 keys[target].clone()
             };
@@ -340,14 +368,19 @@ impl Bundle {
             // sorted, so the order of the parts in the archive plays no role
             let mut text_hashes: Vec<String> = texts
                 .iter()
-                .map(|text| naming::content_hash(text))
+                .map(|text| naming::content_hash(self.hash_key.as_deref(), text))
                 .collect();
             text_hashes.sort_unstable();
-            let digest = naming::content_hash(text_hashes.concat().as_bytes());
+            let digest =
+                naming::content_hash(self.hash_key.as_deref(), text_hashes.concat().as_bytes());
 
             for (&index, mut text) in component.iter().zip(texts) {
                 text.extend_from_slice(digest.as_bytes());
-                keys[index] = Some(naming::content_hash_key(&self.resources[index].mime, &text));
+                keys[index] = Some(naming::content_hash_key(
+                    self.hash_key.as_deref(),
+                    &self.resources[index].mime,
+                    &text,
+                ));
             }
         }
 
@@ -578,7 +611,57 @@ iVBORw0KGgo=\r\n\
                 .expect("valid index");
             assert_eq!(
                 key,
-                naming::content_hash_key(&bundle.resources[index].mime, &bytes)
+                naming::content_hash_key(None, &bundle.resources[index].mime, &bytes)
+            );
+        }
+    }
+
+    // Every expected value in the keyed tests below was computed outside this
+    // crate with `openssl dgst -sha256 -hmac secret`, from the texts spelled out.
+
+    #[test]
+    fn a_hash_key_names_each_resource_by_the_hmac_of_its_served_bytes() {
+        let bundle = chain()
+            .with_hash_key(Some(b"secret"))
+            .expect("non-empty key");
+
+        // HMAC("PNG")
+        let png = "4fd78e5c2f6a21a55a7537f009187de56b30a59a1d17b93eb48390b48cc346c2.png";
+        // HMAC of the stylesheet with the image's key written in
+        let css = "2799367a5cfa75be688dc283e16253ba9bbf6b12fb21254d3dc3eddd20e49660.css";
+        // HMAC of the page with the stylesheet's key written in
+        let html = "428e0d07072416bd941a45c0e3430c23ee3643e9c6da24e94c7c0ad691d0871e.html";
+
+        assert_eq!(hash_key(&bundle, 2), png);
+        assert_eq!(served(&bundle, 2), "PNG");
+        assert_eq!(hash_key(&bundle, 1), css);
+        assert_eq!(
+            served(&bundle, 1),
+            format!("a{{background:url(\"{png}\")}}")
+        );
+        assert_eq!(hash_key(&bundle, 0), html);
+        assert_eq!(served(&bundle, 0), format!("<link href=\"{css}\">"));
+    }
+
+    #[test]
+    fn a_hash_key_changes_every_key_from_its_plain_sha256() {
+        let plain = chain();
+        let keyed = chain()
+            .with_hash_key(Some(b"secret"))
+            .expect("non-empty key");
+        for index in 0..3 {
+            let (plain_key, keyed_key) = (hash_key(&plain, index), hash_key(&keyed, index));
+            assert_ne!(plain_key, keyed_key, "part {index}");
+            // same shape: 64 lowercase hex, then the same extension
+            let (plain_hex, plain_ext) = plain_key.split_once('.').expect("hash.ext");
+            let (keyed_hex, keyed_ext) = keyed_key.split_once('.').expect("hash.ext");
+            assert_eq!(keyed_ext, plain_ext);
+            assert_eq!((plain_hex.len(), keyed_hex.len()), (64, 64));
+            assert!(
+                keyed_hex
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+                "{keyed_hex}"
             );
         }
     }
@@ -589,7 +672,8 @@ iVBORw0KGgo=\r\n\
         let css_key = hash_key(&bundle, 1);
         // The stylesheet's key is over its rewritten text, not its source, so
         // the page naming the source key would point at nothing.
-        let css_source_key = naming::content_hash_key("text/css", b"a{background:url(logo.png)}");
+        let css_source_key =
+            naming::content_hash_key(None, "text/css", b"a{background:url(logo.png)}");
         assert_ne!(css_key, css_source_key);
         assert!(served(&bundle, 0).contains(&format!("href=\"{css_key}\"")));
     }
@@ -617,9 +701,48 @@ iVBORw0KGgo=\r\n\
         let bundle = chain();
         assert_eq!(
             bundle.source_hash(0),
-            Some(naming::content_hash(b"<link href=\"style.css\">"))
+            Some(naming::content_hash(None, b"<link href=\"style.css\">"))
         );
         assert_eq!(bundle.source_hash(3), None);
+    }
+
+    #[test]
+    fn a_hash_key_set_after_keys_were_computed_still_keys_them() {
+        let bundle = chain();
+        // fills the cache with the plain SHA-256 names
+        let plain = hash_key(&bundle, 2);
+        let bundle = bundle
+            .with_hash_key(Some(b"secret"))
+            .expect("non-empty key");
+        assert_ne!(hash_key(&bundle, 2), plain);
+        // HMAC("PNG"), as in a_hash_key_names_each_resource_by_the_hmac_of_its_served_bytes
+        assert_eq!(
+            hash_key(&bundle, 2),
+            "4fd78e5c2f6a21a55a7537f009187de56b30a59a1d17b93eb48390b48cc346c2.png"
+        );
+    }
+
+    #[test]
+    fn an_empty_hash_key_is_rejected() {
+        // HMAC under an empty key is public, so the names would be derivable
+        // while the caller believes they are keyed.
+        let result = chain().with_hash_key(Some(b""));
+        assert_eq!(
+            result.err().map(|e| e.to_string()).as_deref(),
+            Some("hash key is empty")
+        );
+    }
+
+    #[test]
+    fn a_hash_key_keys_the_source_hash() {
+        let bundle = chain()
+            .with_hash_key(Some(b"secret"))
+            .expect("non-empty key");
+        // HMAC of the page's original `<link href="style.css">`
+        assert_eq!(
+            bundle.source_hash(0).as_deref(),
+            Some("80fc6a6f98fb34dff5357a46c72e98218a110a44fcba23d4304813115c2a745f")
+        );
     }
 
     #[test]
@@ -697,8 +820,8 @@ iVBORw0KGgo=\r\n\
         // b's source key written in, plus a digest of the whole cycle (b's text
         // with a's source key in it): a change to either stylesheet, or to
         // anything either one references, changes both keys.
-        let a_source_key = naming::content_hash_key("text/css", a.as_bytes());
-        let b_source_key = naming::content_hash_key("text/css", b.as_bytes());
+        let a_source_key = naming::content_hash_key(None, "text/css", a.as_bytes());
+        let b_source_key = naming::content_hash_key(None, "text/css", b.as_bytes());
         let a_through_b = format!("@import url(\"{b_source_key}\");");
         let b_through_a = format!("@import url(\"{a_source_key}\");");
         assert_eq!(
@@ -719,13 +842,33 @@ iVBORw0KGgo=\r\n\
     fn cycle_key(mime: &str, own: &str, members: &[&str]) -> String {
         let mut member_hashes: Vec<String> = members
             .iter()
-            .map(|text| naming::content_hash(text.as_bytes()))
+            .map(|text| naming::content_hash(None, text.as_bytes()))
             .collect();
         member_hashes.sort_unstable();
-        let digest = naming::content_hash(member_hashes.concat().as_bytes());
+        let digest = naming::content_hash(None, member_hashes.concat().as_bytes());
         let mut keyed = own.as_bytes().to_vec();
         keyed.extend_from_slice(digest.as_bytes());
-        naming::content_hash_key(mime, &keyed)
+        naming::content_hash_key(None, mime, &keyed)
+    }
+
+    #[test]
+    fn a_hash_key_keys_a_cycle_at_every_step() {
+        let bundle = Bundle::from_bytes(&archive(&[
+            ("text/css", "http://h/a.css", "@import url(b.css);"),
+            ("text/css", "http://h/b.css", "@import url(a.css);"),
+        ]))
+        .expect("archive parses")
+        .with_hash_key(Some(b"secret"))
+        .expect("non-empty key");
+        // Built as in `cycle_key`, every hash an HMAC: the members' source keys,
+        // each member's text with the other's source key in it, the digest of
+        // those texts' sorted hashes, and each member's text plus that digest.
+        let a = "895d27c33b1f609565e1ac906517dc80506f5476fc4ff84c38d3f47b939f3e88.css";
+        let b = "07a048588eb5910885b77e3810b79c0be46337efd703a1297087190f4310bdc3.css";
+        assert_eq!(hash_key(&bundle, 0), a);
+        assert_eq!(hash_key(&bundle, 1), b);
+        assert_eq!(served(&bundle, 0), format!("@import url(\"{b}\");"));
+        assert_eq!(served(&bundle, 1), format!("@import url(\"{a}\");"));
     }
 
     #[test]
@@ -943,7 +1086,7 @@ Content-Transfer-Encoding: 7bit\r\n\
         // logo.png resolves to the in-bundle PNG; under ContentHash its reference
         // becomes the bare "<sha256>.png" key (relative, no leading '/').
         let png = bundle.get_index(1).expect("png");
-        let key = format!("{}.png", naming::content_hash(&png.body));
+        let key = format!("{}.png", naming::content_hash(None, &png.body));
         assert!(html.contains(&format!("src=\"{key}\"")), "got: {html}");
         assert!(!html.contains("http://example.com/logo.png"), "got: {html}");
     }
@@ -960,7 +1103,7 @@ Content-Transfer-Encoding: 7bit\r\n\
             .expect("valid index");
         let xhtml = String::from_utf8(out).expect("utf-8");
         let png = bundle.get_index(1).expect("png");
-        let key = format!("{}.png", naming::content_hash(&png.body));
+        let key = format!("{}.png", naming::content_hash(None, &png.body));
         assert!(xhtml.contains(&format!("src=\"{key}\"")), "got: {xhtml}");
         assert!(!xhtml.contains("src=\"logo.png\""), "got: {xhtml}");
         assert!(xhtml.contains("/>"), "self-closing tag lost: {xhtml}");
@@ -997,7 +1140,7 @@ body{}\r\n\
 --B--\r\n";
         let bundle = Bundle::from_bytes(data).expect("archive parses");
         let css = bundle.get_index(1).expect("css");
-        let key = format!("{}.css", naming::content_hash(&css.body));
+        let key = format!("{}.css", naming::content_hash(None, &css.body));
         let html = String::from_utf8(
             bundle
                 .rewritten(0, &NamingStrategy::ContentHash, None)
@@ -1034,7 +1177,7 @@ iVBORw0KGgo=\r\n\
 --B--\r\n";
         let bundle = Bundle::from_bytes(data).expect("archive parses");
         let png = bundle.get_index(1).expect("png");
-        let key = format!("{}.png", naming::content_hash(&png.body));
+        let key = format!("{}.png", naming::content_hash(None, &png.body));
         let css = String::from_utf8(
             bundle
                 .rewritten(0, &NamingStrategy::ContentHash, None)
@@ -1050,7 +1193,7 @@ iVBORw0KGgo=\r\n\
         let png = bundle.get_index(1).expect("png");
         assert_eq!(
             bundle.resource_key(1, &NamingStrategy::ContentHash),
-            Some(format!("{}.png", naming::content_hash(&png.body)))
+            Some(format!("{}.png", naming::content_hash(None, &png.body)))
         );
         assert_eq!(
             bundle
@@ -1072,7 +1215,7 @@ iVBORw0KGgo=\r\n\
         assert_eq!(assets.len(), 2);
 
         let png = bundle.get_index(1).expect("png");
-        let png_key = format!("{}.png", naming::content_hash(&png.body));
+        let png_key = format!("{}.png", naming::content_hash(None, &png.body));
 
         let entry = assets.iter().find(|a| a.is_entry).expect("entry asset");
         assert_eq!(entry.mime, "text/html");
@@ -1117,7 +1260,7 @@ iVBORw0KGgo=\r\n\
 --B--\r\n";
         let bundle = Bundle::from_bytes(data).expect("archive parses");
         let png = bundle.get_index(1).expect("png");
-        let key = format!("{}.png", naming::content_hash(&png.body));
+        let key = format!("{}.png", naming::content_hash(None, &png.body));
         let html = String::from_utf8(
             bundle
                 .rewritten(

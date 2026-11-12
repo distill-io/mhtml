@@ -190,7 +190,8 @@ struct ManifestEntry {
 /// Extract `input` into `out` under `naming`. Mirror mode preserves the URL
 /// hierarchy on disk (two-pass, salvage-friendly). Hash mode writes flat
 /// content-hash files, a `manifest.json`, and a rewritten `index.html`.
-/// `base_href` sets the entry document's emitted `<base>` and is only valid in
+/// `base_href` sets the entry document's emitted `<base>`, and `hash_key` keys
+/// the content hashes (HMAC-SHA256 instead of SHA-256); both are only valid in
 /// hash mode.
 pub fn run(
     input: &Path,
@@ -198,9 +199,13 @@ pub fn run(
     strict: bool,
     naming: Naming,
     base_href: Option<&str>,
+    hash_key: Option<&str>,
 ) -> anyhow::Result<Outcome> {
     if matches!(naming, Naming::Mirror) && base_href.is_some() {
         bail!("--base-href is only supported with --naming hash");
+    }
+    if matches!(naming, Naming::Mirror) && hash_key.is_some() {
+        bail!("--hash-key is only supported with --naming hash");
     }
     let data = fs::read(input).with_context(|| format!("reading {}", input.display()))?;
 
@@ -217,7 +222,7 @@ pub fn run(
 
     match naming {
         Naming::Mirror => extract_mirror(&data, out, strict, created_root),
-        Naming::Hash => extract_hash(&data, out, base_href),
+        Naming::Hash => extract_hash(&data, out, base_href, hash_key),
     }
 }
 
@@ -226,8 +231,15 @@ pub fn run(
 /// resource, and the rewritten entry document at `index.html`. Bundle parsing is
 /// all-or-nothing, so a malformed archive is an error rather
 /// than a salvage.
-fn extract_hash(data: &[u8], out: &Path, base_href: Option<&str>) -> anyhow::Result<Outcome> {
-    let bundle = Bundle::from_bytes(data).context("parsing MHTML archive")?;
+fn extract_hash(
+    data: &[u8],
+    out: &Path,
+    base_href: Option<&str>,
+    hash_key: Option<&str>,
+) -> anyhow::Result<Outcome> {
+    let bundle = Bundle::from_bytes(data)
+        .context("parsing MHTML archive")?
+        .with_hash_key(hash_key.map(str::as_bytes))?;
 
     // Serve-ready assets, one per resource, each hashing to its key.
     let assets = bundle.manifest(&NamingStrategy::ContentHash);

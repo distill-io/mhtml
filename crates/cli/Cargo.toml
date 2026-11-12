@@ -23,4 +23,6 @@ percent-encoding = "2"
 anyhow = "1"
 
 [dev-dependencies]
+hmac = "0.12"
+sha2 = "0.10"
 tempfile = "3"

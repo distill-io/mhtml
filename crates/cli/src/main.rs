@@ -42,6 +42,10 @@ enum Command {
         /// its bare `<hash>.<ext>` references resolve against a CDN/S3 prefix.
         #[arg(long)]
         base_href: Option<String>,
+        /// Key the content hashes with this secret (HMAC-SHA256 instead of plain
+        /// SHA-256; hash mode only), so keys cannot be derived from content.
+        #[arg(long)]
+        hash_key: Option<String>,
     },
 }
 
@@ -62,9 +66,17 @@ fn main() -> ExitCode {
             strict,
             naming,
             base_href,
+            hash_key,
         } => {
             let out = output.unwrap_or_else(|| extract::default_out_dir(&file));
-            match extract::run(&file, &out, strict, naming, base_href.as_deref()) {
+            match extract::run(
+                &file,
+                &out,
+                strict,
+                naming,
+                base_href.as_deref(),
+                hash_key.as_deref(),
+            ) {
                 Ok(extract::Outcome::Success) => ExitCode::SUCCESS,
                 Ok(extract::Outcome::Failed) => ExitCode::from(1),
                 Err(e) => {
