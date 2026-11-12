@@ -777,7 +777,7 @@ fn an_empty_hash_key_is_an_error() {
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         String::from_utf8_lossy(&output.stderr),
-        "error: hash key is empty\n"
+        "error: --hash-key must not be empty\n"
     );
-    assert!(!out.join("manifest.json").exists());
+    assert!(!out.exists(), "nothing is written");
 }

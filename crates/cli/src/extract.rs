@@ -207,6 +207,9 @@ pub fn run(
     if matches!(naming, Naming::Mirror) && hash_key.is_some() {
         bail!("--hash-key is only supported with --naming hash");
     }
+    if hash_key == Some("") {
+        bail!("--hash-key must not be empty");
+    }
     let data = fs::read(input).with_context(|| format!("reading {}", input.display()))?;
 
     // Never clobber: refuse a non-empty (or non-directory) output target.
