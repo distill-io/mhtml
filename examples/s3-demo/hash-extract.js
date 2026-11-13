@@ -16,7 +16,7 @@
 
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { MhtmlArchive } from "../../crates/wasm/pkg-node/mhtml_wasm.js";
+import { MhtmlArchive, ParseOptions } from "../../crates/wasm/pkg-node/mhtml_wasm.js";
 
 const args = process.argv.slice(2);
 let baseHref;
@@ -33,7 +33,7 @@ if (!archivePath || !outDir) {
 
 let archive;
 try {
-  archive = MhtmlArchive.parse(readFileSync(archivePath));
+  archive = MhtmlArchive.parse(readFileSync(archivePath), new ParseOptions());
 } catch (err) {
   console.error(`parse failed: ${err.message}`);
   process.exit(1);

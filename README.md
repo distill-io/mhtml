@@ -129,9 +129,9 @@ The bindings expose a small `MhtmlArchive` class. Here it publishes an archive t
 
 ```js
 import { readFile } from "node:fs/promises";
-import { MhtmlArchive } from "./crates/wasm/pkg-node/mhtml_wasm.js";
+import { MhtmlArchive, ParseOptions } from "./crates/wasm/pkg-node/mhtml_wasm.js";
 
-const archive = MhtmlArchive.parse(await readFile("page.mhtml"));
+const archive = MhtmlArchive.parse(await readFile("page.mhtml"), new ParseOptions());
 
 for (let i = 0; i < archive.resource_count(); i++) {
   await bucket.put(archive.resource_key(i, "hash"), archive.rewritten_at(i, "hash"), {
@@ -140,7 +140,7 @@ for (let i = 0; i < archive.resource_count(); i++) {
 }
 ```
 
-`resource_key(i, "hash")` returns `"<sha256>.<ext>"`. `rewritten_at(i, "hash")` returns the resource's bytes with its in-archive links re-pointed to those keys (HTML and CSS are rewritten; everything else passes through). Pass `"mirror"` instead to keep the URL layout, and an optional `base_href` as the last argument for a bucket or CDN prefix. These are the same options as the Rust [`Bundle` API](#library--mhtml-serve). Other methods: `entry_url()`, `entry_index()`, `urls()`, `resource_charset(i)`, `body_at(i)` (raw, un-rewritten), `content_type_at(i)`, and `entry_rewritten("hash")` for just the root document. See [`docs/naming-strategy.md`](docs/naming-strategy.md) for the full design.
+`resource_key(i, "hash")` returns `"<sha256>.<ext>"`. `rewritten_at(i, "hash")` returns the resource's bytes with its in-archive links re-pointed to those keys (HTML and CSS are rewritten; everything else passes through). Pass `"mirror"` instead to keep the URL layout, and an optional `base_href` as the last argument for a bucket or CDN prefix. These are the same options as the Rust [`Bundle` API](#library--mhtml-serve). To key the hashes with a secret (HMAC-SHA256, so a key cannot be derived from the content), set `hashKey` on the `ParseOptions` before parsing (`const options = new ParseOptions(); options.hashKey = "…";`). Other methods: `entry_url()`, `entry_index()`, `urls()`, `resource_charset(i)`, `body_at(i)` (raw, un-rewritten), `content_type_at(i)`, and `entry_rewritten("hash")` for just the root document. See [`docs/naming-strategy.md`](docs/naming-strategy.md) for the full design.
 
 `make serve-demo` runs a small `node:http` server on those bindings, with no dependencies:
 

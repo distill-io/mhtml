@@ -203,7 +203,7 @@ Strategy crosses the boundary as a string (`"hash"` → ContentHash, anything el
 names.
 
 ```rust
-pub fn parse(bytes: &[u8]) -> Result<MhtmlArchive, JsError>;
+pub fn parse(bytes: &[u8], options: &ParseOptions) -> Result<MhtmlArchive, JsError>; // new ParseOptions(), .hashKey
 pub fn entry_index(&self) -> Option<usize>;
 pub fn entry_url(&self) -> Option<String>;
 pub fn urls(&self) -> Vec<String>;

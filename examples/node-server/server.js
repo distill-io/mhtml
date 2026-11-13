@@ -11,7 +11,7 @@
 
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
-import { MhtmlArchive } from "../../crates/wasm/pkg-node/mhtml_wasm.js";
+import { MhtmlArchive, ParseOptions } from "../../crates/wasm/pkg-node/mhtml_wasm.js";
 
 const STRATEGY = "hash";
 
@@ -24,7 +24,7 @@ const port = Number(portArg ?? 8000);
 
 let archive;
 try {
-  archive = MhtmlArchive.parse(readFileSync(file));
+  archive = MhtmlArchive.parse(readFileSync(file), new ParseOptions());
 } catch (err) {
   console.error(`parse failed: ${err.message}`);
   process.exit(1);

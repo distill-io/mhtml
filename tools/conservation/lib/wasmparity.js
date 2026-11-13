@@ -6,7 +6,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { MhtmlArchive } from "../../../crates/wasm/pkg-node/mhtml_wasm.js";
+import { MhtmlArchive, ParseOptions } from "../../../crates/wasm/pkg-node/mhtml_wasm.js";
 
 function sha256(buf) {
   return createHash("sha256").update(buf).digest("hex");
@@ -31,7 +31,7 @@ async function hashTree(dir) {
  * @returns {{ pass:boolean, checked:number, mismatches:{url:string,mime:string}[] }}
  */
 export async function wasmParity(mhtmlPath, outDir) {
-  const archive = MhtmlArchive.parse(await readFile(mhtmlPath));
+  const archive = MhtmlArchive.parse(await readFile(mhtmlPath), new ParseOptions());
   const diskHashes = await hashTree(outDir);
 
   const seen = new Set();

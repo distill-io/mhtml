@@ -188,7 +188,7 @@ fn extracts_fixture_a_into_the_expected_tree() {
     let out = tmp.path().join("out");
 
     let outcome =
-        extract::run(&input, &out, false, extract::Naming::Mirror, None).expect("extract");
+        extract::run(&input, &out, false, extract::Naming::Mirror, None, None).expect("extract");
     assert!(matches!(outcome, Outcome::Success));
 
     let expected: BTreeSet<String> = [
@@ -288,7 +288,7 @@ fn rewrites_every_reference_to_an_extracted_file_or_external() {
     let tmp = tempfile::tempdir().unwrap();
     let input = write_input(tmp.path(), &fixture_a());
     let out = tmp.path().join("out");
-    extract::run(&input, &out, false, extract::Naming::Mirror, None).expect("extract");
+    extract::run(&input, &out, false, extract::Naming::Mirror, None, None).expect("extract");
 
     let post = read(&out.join("example.com/blog/post.html"));
     let css = read(&out.join("example.com/style/main.css"));
@@ -330,7 +330,7 @@ fn truncated_archive_salvages_earlier_parts_in_default_mode() {
     let out = tmp.path().join("out");
 
     let outcome =
-        extract::run(&input, &out, false, extract::Naming::Mirror, None).expect("extract");
+        extract::run(&input, &out, false, extract::Naming::Mirror, None, None).expect("extract");
     assert!(matches!(outcome, Outcome::Failed));
 
     // Parts 1-3 (root, css, image) plus the entry redirect are salvaged; the
@@ -358,7 +358,7 @@ fn file_vs_directory_collision_is_salvaged_not_fatal() {
     // The collision between h/a.png (a file) and h/a.png/b.png (which would
     // need a.png to be a directory) must not abort the whole extract with a
     // raw OS error; it is treated like an unsalvageable part.
-    let outcome = extract::run(&input, &out, false, extract::Naming::Mirror, None)
+    let outcome = extract::run(&input, &out, false, extract::Naming::Mirror, None, None)
         .expect("extract must not error out");
     assert!(matches!(outcome, Outcome::Failed));
 
@@ -376,7 +376,8 @@ fn truncated_archive_in_strict_mode_removes_the_output_dir() {
     let input = write_input(tmp.path(), &fixture_b());
     let out = tmp.path().join("out");
 
-    let outcome = extract::run(&input, &out, true, extract::Naming::Mirror, None).expect("extract");
+    let outcome =
+        extract::run(&input, &out, true, extract::Naming::Mirror, None, None).expect("extract");
     assert!(matches!(outcome, Outcome::Failed));
     assert!(
         !out.exists(),
@@ -395,7 +396,7 @@ fn strict_mode_refuses_to_delete_a_preexisting_output_dir() {
 
     // Strict cleanup must refuse (error) rather than delete a dir it did not
     // create; the salvaged files are left in place.
-    let result = extract::run(&input, &out, true, extract::Naming::Mirror, None);
+    let result = extract::run(&input, &out, true, extract::Naming::Mirror, None, None);
     assert!(result.is_err(), "expected a refusal error");
     assert!(out.exists(), "the pre-existing dir must not be deleted");
     assert!(out.join("example.com/img/logo.png").exists());
@@ -498,7 +499,8 @@ fn hash_extract_writes_flat_files_manifest_and_rewritten_entry() {
     let input = write_input(tmp.path(), HASH_ARCHIVE);
     let out = tmp.path().join("out");
 
-    let outcome = extract::run(&input, &out, false, extract::Naming::Hash, None).expect("extract");
+    let outcome =
+        extract::run(&input, &out, false, extract::Naming::Hash, None, None).expect("extract");
     assert!(matches!(outcome, Outcome::Success));
 
     // manifest.json lists all three resources by hash key, with original URLs.
@@ -549,6 +551,7 @@ fn hash_extract_with_base_href_sets_base_on_entry() {
         false,
         extract::Naming::Hash,
         Some("https://cdn.example/"),
+        None,
     )
     .expect("extract");
 
@@ -573,6 +576,114 @@ fn hash_extract_with_base_href_sets_base_on_entry() {
     assert!(!addressed.contains("<base href"), "{addressed}");
 }
 
+// HASH_ARCHIVE's keys under `--hash-key secret`, computed outside this crate
+// with `openssl dgst -sha256 -hmac secret`: the CSS over `123abc`, the PNG over
+// its 8 decoded bytes, the page over its text with those two keys written in.
+const KEYED_HTML: &str = "5b462764aef4cdacd97d9804436cba211697ce89297ef982968127cb0cf2ae23.html";
+const KEYED_CSS: &str = "f6331f46b3585aca188fcb62370f9641838bd063b3fac0efed6b02bf04b7ff20.css";
+const KEYED_PNG: &str = "efa8a2e9e71a0fd8b4cfb316d3e0eb9fc79bf2dc329e0263d84e82d9d3eeb166.png";
+
+/// Every file name directly under `dir`, sorted.
+fn file_names(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .expect("readable dir")
+        .map(|entry| {
+            entry
+                .expect("dir entry")
+                .file_name()
+                .into_string()
+                .expect("utf-8")
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn hash_extract_with_hash_key_writes_the_keyed_names() {
+    let tmp = tempfile::tempdir().unwrap();
+    let input = write_input(tmp.path(), HASH_ARCHIVE);
+    let out = tmp.path().join("out");
+    extract::run(
+        &input,
+        &out,
+        false,
+        extract::Naming::Hash,
+        None,
+        Some("secret"),
+    )
+    .expect("extract");
+
+    assert_eq!(
+        read(&out.join("manifest.json")),
+        format!(
+            "[\n  \
+             {{\"key\": \"{KEYED_HTML}\", \"mime\": \"text/html\", \"url\": \"http://example.com/\"}},\n  \
+             {{\"key\": \"{KEYED_CSS}\", \"mime\": \"text/css\", \"url\": \"http://example.com/style.css\"}},\n  \
+             {{\"key\": \"{KEYED_PNG}\", \"mime\": \"image/png\", \"url\": \"http://example.com/logo.png\"}}\n\
+             ]\n"
+        )
+    );
+    let mut expected_files = vec![
+        KEYED_CSS,
+        KEYED_HTML,
+        KEYED_PNG,
+        "index.html",
+        "manifest.json",
+    ];
+    expected_files.sort();
+    assert_eq!(file_names(&out), expected_files);
+
+    let page = format!(
+        "<html><head><title>t</title></head><body>\
+         <link rel=\"stylesheet\" href=\"{KEYED_CSS}\"><img src=\"{KEYED_PNG}\"></body></html>"
+    );
+    assert_eq!(read(&out.join(KEYED_HTML)), page);
+    assert_eq!(read(&out.join("index.html")), page);
+    assert_eq!(read(&out.join(KEYED_CSS)), "123abc");
+    assert_eq!(
+        std::fs::read(out.join(KEYED_PNG)).unwrap(),
+        b"\x89PNG\r\n\x1a\n"
+    );
+}
+
+#[test]
+fn every_keyed_file_is_named_by_the_hmac_of_its_bytes_under_the_password() {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+
+    let password = "a different password";
+    let tmp = tempfile::tempdir().unwrap();
+    let input = write_input(tmp.path(), HASH_ARCHIVE);
+    let out = tmp.path().join("out");
+    extract::run(
+        &input,
+        &out,
+        false,
+        extract::Naming::Hash,
+        None,
+        Some(password),
+    )
+    .expect("extract");
+
+    let keys = manifest_keys(&read(&out.join("manifest.json")));
+    assert_eq!(keys.len(), 3, "{keys:?}");
+    for key in keys {
+        let (found, ext) = key.split_once('.').expect("hash.ext");
+        let bytes = std::fs::read(out.join(&key)).expect("keyed file exists");
+        let mut mac = Hmac::<Sha256>::new_from_slice(password.as_bytes()).expect("any key length");
+        mac.update(&bytes);
+        let constructed: String = mac
+            .finalize()
+            .into_bytes()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert_eq!(found, constructed, "{key}");
+        assert!(["html", "css", "png"].contains(&ext), "{key}");
+    }
+}
+
 #[test]
 fn mirror_mode_rejects_base_href() {
     let tmp = tempfile::tempdir().unwrap();
@@ -584,6 +695,89 @@ fn mirror_mode_rejects_base_href() {
         false,
         extract::Naming::Mirror,
         Some("https://cdn.example/"),
+        None,
     );
     assert!(result.is_err(), "mirror mode must reject --base-href");
+}
+
+#[test]
+fn mirror_mode_rejects_hash_key() {
+    let tmp = tempfile::tempdir().unwrap();
+    let input = write_input(tmp.path(), HASH_ARCHIVE);
+    let out = tmp.path().join("out");
+    let result = extract::run(
+        &input,
+        &out,
+        false,
+        extract::Naming::Mirror,
+        None,
+        Some("secret"),
+    );
+    assert_eq!(
+        result.err().map(|e| e.to_string()).as_deref(),
+        Some("--hash-key is only supported with --naming hash")
+    );
+    assert!(!out.exists(), "nothing is written");
+}
+
+#[test]
+fn hash_key_flag_reaches_the_extraction() {
+    use std::ffi::OsStr;
+    let tmp = tempfile::tempdir().unwrap();
+    let input = write_input(tmp.path(), HASH_ARCHIVE);
+    let manifest_for = |dir: &str, hash_key: Option<&str>| {
+        let out = tmp.path().join(dir);
+        let mut args = vec![
+            OsStr::new("extract"),
+            input.as_os_str(),
+            OsStr::new("--naming"),
+            OsStr::new("hash"),
+            OsStr::new("-o"),
+            out.as_os_str(),
+        ];
+        if let Some(key) = hash_key {
+            args.extend([OsStr::new("--hash-key"), OsStr::new(key)]);
+        }
+        let output = run_bin(&args);
+        assert!(output.status.success(), "{output:?}");
+        manifest_keys(&read(&out.join("manifest.json")))
+    };
+
+    // plain SHA-256 (`openssl dgst -sha256`) without the flag
+    assert_eq!(
+        manifest_for("plain", None),
+        [
+            "95bcd79a149eecf11efdf466e7fe67e9e6694c7c48be755c6bf07dfb2329cbb4.html",
+            "dd130a849d7b29e5541b05d2f7f86a4acd4f1ec598c1c9438783f56bc4f0ff80.css",
+            "4c4b6a3be1314ab86138bef4314dde022e600960d8689a2c8f8631802d20dab6.png",
+        ]
+    );
+    assert_eq!(
+        manifest_for("keyed", Some("secret")),
+        [KEYED_HTML, KEYED_CSS, KEYED_PNG]
+    );
+}
+
+#[test]
+fn an_empty_hash_key_is_an_error() {
+    use std::ffi::OsStr;
+    let tmp = tempfile::tempdir().unwrap();
+    let input = write_input(tmp.path(), HASH_ARCHIVE);
+    let out = tmp.path().join("out");
+    let output = run_bin(&[
+        OsStr::new("extract"),
+        input.as_os_str(),
+        OsStr::new("--naming"),
+        OsStr::new("hash"),
+        OsStr::new("--hash-key"),
+        OsStr::new(""),
+        OsStr::new("-o"),
+        out.as_os_str(),
+    ]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "error: --hash-key must not be empty\n"
+    );
+    assert!(!out.exists(), "nothing is written");
 }

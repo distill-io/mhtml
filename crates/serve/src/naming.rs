@@ -14,6 +14,7 @@
 
 use std::fmt::Write as _;
 
+use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 use url::Url;
 
@@ -39,21 +40,30 @@ pub fn resource_key(
     body: &[u8],
 ) -> Option<String> {
     match strategy {
-        NamingStrategy::ContentHash => Some(content_hash_key(mime, body)),
+        NamingStrategy::ContentHash => Some(content_hash_key(None, mime, body)),
         NamingStrategy::MirrorPath => mirror_key(url?, mime),
     }
 }
 
 /// `<sha256 of bytes>.<ext>`: the [`NamingStrategy::ContentHash`] key of `bytes`
 /// served as `mime`.
-pub(crate) fn content_hash_key(mime: &str, bytes: &[u8]) -> String {
-    format!("{}.{}", content_hash(bytes), ext_for_mime(mime))
+pub(crate) fn content_hash_key(key: Option<&[u8]>, mime: &str, bytes: &[u8]) -> String {
+    format!("{}.{}", content_hash(key, bytes), ext_for_mime(mime))
 }
 
-/// The lowercase-hex SHA-256 of `bytes`. Used as the content-addressed key
-/// under [`NamingStrategy::ContentHash`].
-pub(crate) fn content_hash(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
+/// The lowercase-hex SHA-256 of `bytes`, or their HMAC-SHA256 under `key` when
+/// one is given. Used as the content-addressed key under
+/// [`NamingStrategy::ContentHash`].
+pub(crate) fn content_hash(key: Option<&[u8]>, bytes: &[u8]) -> String {
+    let digest = match key {
+        // HMAC rather than sha256(key ‖ bytes), which is open to length extension.
+        Some(key) => Hmac::<Sha256>::new_from_slice(key)
+            .expect("HMAC accepts a key of any length")
+            .chain_update(bytes)
+            .finalize()
+            .into_bytes(),
+        None => Sha256::digest(bytes),
+    };
     let mut hex = String::with_capacity(64);
     for b in digest {
         let _ = write!(hex, "{b:02x}");
@@ -200,8 +210,17 @@ mod tests {
     #[test]
     fn content_hash_empty_vector() {
         assert_eq!(
-            content_hash(b""),
+            content_hash(None, b""),
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    #[test]
+    fn content_hash_with_key_is_hmac_sha256() {
+        // RFC 4231 test case 2
+        assert_eq!(
+            content_hash(Some(b"Jefe"), b"what do ya want for nothing?"),
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
         );
     }
 
@@ -227,7 +246,7 @@ mod tests {
         let body = b"\x89PNG payload";
         // The key is content-addressed: hash of the bytes, extension from MIME,
         // and the URL is ignored entirely (even when absent).
-        let expected = format!("{}.png", content_hash(body));
+        let expected = format!("{}.png", content_hash(None, body));
         assert_eq!(
             resource_key(&NamingStrategy::ContentHash, None, "image/png", body),
             Some(expected.clone())
