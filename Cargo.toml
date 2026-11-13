@@ -4,5 +4,10 @@ resolver = "3"
 exclude = ["crates/parser/fuzz"]
 
 [workspace.package]
+version = "0.1.2"
 edition = "2024"
 license = "BSD-3-Clause"
+
+[workspace.dependencies]
+mhtml = { path = "crates/parser", version = "0.1.2" }
+mhtml-serve = { path = "crates/serve", version = "0.1.2" }
