@@ -7,14 +7,14 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { MhtmlArchive } from "../../crates/wasm/pkg-node/mhtml_wasm.js";
+import { MhtmlArchive, ParseOptions } from "../../crates/wasm/pkg-node/mhtml_wasm.js";
 
 // Resolve the fixture relative to this file, not the process cwd.
 const fixture = fileURLToPath(
   new URL("../../crates/cli/tests/fixtures/simple.mhtml", import.meta.url),
 );
 
-const archive = MhtmlArchive.parse(readFileSync(fixture));
+const archive = MhtmlArchive.parse(readFileSync(fixture), new ParseOptions());
 
 // simple.mhtml has three parts: the root document plus two subresources.
 assert.equal(archive.urls().length, 3, "expected 3 parts");
@@ -46,7 +46,7 @@ assert.ok(
 // The content-hash strategy exposes every resource by index with a flat
 // "<sha256>.<ext>" key. Locate the style.css resource and confirm its key is
 // the SHA-256 of its raw body plus the ".css" extension.
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 
 assert.equal(archive.resource_count(), 3, "expected 3 resources");
 
@@ -83,6 +83,38 @@ assert.ok(
 assert.ok(
   !entry.includes("http://example.com/style.css"),
   "rewritten entry should not contain the raw subresource URL",
+);
+
+// Options: `hashKey` keys every content hash with HMAC-SHA256.
+const withKey = (hashKey) => {
+  const options = new ParseOptions();
+  options.hashKey = hashKey;
+  return options;
+};
+const keyed = MhtmlArchive.parse(readFileSync(fixture), withKey("secret"));
+assert.equal(
+  keyed.resource_key(cssIndex, "hash"),
+  `${createHmac("sha256", "secret").update(cssBody).digest("hex")}.css`,
+  "keyed content-hash key = hmac(secret, body).css",
+);
+const reused = withKey("secret");
+MhtmlArchive.parse(readFileSync(fixture), reused);
+assert.equal(
+  MhtmlArchive.parse(readFileSync(fixture), reused).resource_key(cssIndex, "hash"),
+  keyed.resource_key(cssIndex, "hash"),
+  "options stay usable after a parse",
+);
+assert.throws(
+  () => MhtmlArchive.parse(readFileSync(fixture), withKey("")),
+  /hash key is empty/,
+);
+assert.equal(
+  MhtmlArchive.parse(readFileSync(fixture), new ParseOptions()).resource_key(
+    cssIndex,
+    "hash",
+  ),
+  expectedCssKey,
+  "default options keep plain sha256",
 );
 
 console.log("smoke: ok");

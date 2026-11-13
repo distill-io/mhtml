@@ -17,14 +17,30 @@ fn strategy_for(label: &str) -> NamingStrategy {
     }
 }
 
+#[wasm_bindgen(getter_with_clone)]
+#[derive(Default)]
+pub struct ParseOptions {
+    /// Key every `"hash"` key and source hash (HMAC-SHA256 instead of plain SHA-256).
+    #[wasm_bindgen(js_name = hashKey)]
+    pub hash_key: Option<String>,
+}
+
+#[wasm_bindgen]
+impl ParseOptions {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> ParseOptions {
+        ParseOptions::default()
+    }
+}
+
 #[wasm_bindgen]
 impl MhtmlArchive {
-    /// Parse `bytes`. A `hash_key` keys every `"hash"` key and source hash
-    /// (HMAC-SHA256 instead of plain SHA-256).
-    pub fn parse(bytes: &[u8], hash_key: Option<String>) -> Result<MhtmlArchive, JsError> {
+    /// Parse `bytes`; pass `new ParseOptions()` for the defaults.
+    pub fn parse(bytes: &[u8], options: &ParseOptions) -> Result<MhtmlArchive, JsError> {
+        let hash_key = options.hash_key.as_deref();
         let bundle = Bundle::from_bytes(bytes).map_err(|e| JsError::new(&e.to_string()))?;
         bundle
-            .with_hash_key(hash_key.as_deref().map(str::as_bytes))
+            .with_hash_key(hash_key.map(str::as_bytes))
             .map(MhtmlArchive)
             .map_err(|e| JsError::new(&e.to_string()))
     }
