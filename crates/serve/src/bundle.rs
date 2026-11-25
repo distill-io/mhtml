@@ -576,6 +576,27 @@ iVBORw0KGgo=\r\n\
         assert_ne!(hash_key(&red, 0), hash_key(&blue, 0));
     }
 
+    #[test]
+    fn a_canonical_link_to_itself_does_not_change_the_page_key() {
+        // Two captures of one page whose image URL carries a different cache
+        // buster: the same image, so the page serves the same bytes either way.
+        let capture = |version: &str| {
+            let image = format!("http://h/logo.png?v={version}");
+            let html = format!(
+                "<link rel=\"canonical\" href=\"http://h/index.html\"><img src=\"{image}\">"
+            );
+            Bundle::from_bytes(&archive(&[
+                ("text/html", "http://h/index.html", &html),
+                ("image/png", &image, "PNG"),
+            ]))
+            .expect("archive parses")
+        };
+        let first = capture("1");
+        let second = capture("2");
+        assert_eq!(served(&first, 0), served(&second, 0));
+        assert_eq!(hash_key(&first, 0), hash_key(&second, 0));
+    }
+
     fn served(bundle: &Bundle, index: usize) -> String {
         let bytes = bundle
             .rewritten(index, &NamingStrategy::ContentHash, None)

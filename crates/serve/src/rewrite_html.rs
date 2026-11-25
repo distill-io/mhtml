@@ -71,7 +71,8 @@ fn entity_char(entity: &str) -> Option<char> {
 /// Elements whose reference-bearing attribute is a plain URL. Each entry is a
 /// `(selector, attribute)` pair fed to a shared rewriting handler.
 const URL_ATTRS: &[(&str, &str)] = &[
-    ("link[href]", "href"),
+    // a canonical link is never fetched; rewriting it makes a page point at itself
+    (r#"link[href]:not([rel~="canonical" i])"#, "href"),
     ("area[href]", "href"),
     ("img[src]", "src"),
     ("script[src]", "src"),
@@ -487,6 +488,20 @@ mod tests {
                 &[("http://h/img/p.html", "../img/p.html")]
             ),
             r#"<a href="http://h/img/p.html">x</a>"#
+        );
+    }
+
+    #[test]
+    fn canonical_link_is_left_untouched() {
+        assert_eq!(
+            run(
+                r#"<link rel="canonical" href="http://h/page.html"><link rel="Alternate Canonical" href="http://h/page.html"><link rel="stylesheet" href="http://h/a.css">"#,
+                &[
+                    ("http://h/page.html", "page.html"),
+                    ("http://h/a.css", "a.css")
+                ]
+            ),
+            r#"<link rel="canonical" href="http://h/page.html"><link rel="Alternate Canonical" href="http://h/page.html"><link rel="stylesheet" href="a.css">"#
         );
     }
 
